@@ -1,80 +1,100 @@
-"""Cron job parser module.
-
-Parses crontab entries from a string or file and returns structured
-representations of each scheduled job.
-"""
+"""Parse raw crontab text into structured CronEntry objects."""
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 
-# Matches a standard 5-field cron expression followed by a command.
-_CRON_LINE_RE = re.compile(
-    r"^\s*"
-    r"(?P<minute>[\w*/,\-]+)\s+"
-    r"(?P<hour>[\w*/,\-]+)\s+"
-    r"(?P<dom>[\w*/,\-]+)\s+"
-    r"(?P<month>[\w*/,\-]+)\s+"
-    r"(?P<dow>[\w*/,\-]+)\s+"
-    r"(?P<command>.+)$"
-)
+
+@dataclass
+class CronSchedule:
+    minute: str
+    hour: str
+    day: str
+    month: str
+    weekday: str
+
+    def __str__(self) -> str:
+        return f"{self.minute} {self.hour} {self.day} {self.month} {self.weekday}"
 
 
 @dataclass
 class CronEntry:
-    """Represents a single parsed cron job."""
-
-    minute: str
-    hour: str
-    dom: str          # day-of-month
-    month: str
-    dow: str          # day-of-week
+    schedule: CronSchedule
     command: str
-    source: str = ""  # hostname or file path
-    line_number: Optional[int] = None
+    server: str
+    raw: str
+    user: Optional[str] = None
 
     @property
-    def schedule(self) -> str:
-        """Return the 5-field schedule expression."""
-        return f"{self.minute} {self.hour} {self.dom} {self.month} {self.dow}"
+    def schedule_str(self) -> str:
+        return str(self.schedule)
 
-    def __str__(self) -> str:  # pragma: no cover
-        return f"[{self.source}] {self.schedule}  {self.command}"
+    def __str__(self) -> str:
+        user_part = f" ({self.user})" if self.user else ""
+        return f"[{self.server}]{user_part} {self.schedule_str}  {self.command}"
 
 
-def parse_crontab(text: str, source: str = "") -> List[CronEntry]:
-    """Parse *text* as a crontab and return a list of :class:`CronEntry` objects.
+_COMMENT_OR_BLANK = frozenset(("", "#"))
+_SPECIAL_SCHEDULES: dict[str, CronSchedule] = {
+    "@yearly":   CronSchedule("0", "0", "1", "1", "*"),
+    "@annually": CronSchedule("0", "0", "1", "1", "*"),
+    "@monthly":  CronSchedule("0", "0", "1", "*", "*"),
+    "@weekly":   CronSchedule("0", "0", "*", "*", "0"),
+    "@daily":    CronSchedule("0", "0", "*", "*", "*"),
+    "@midnight": CronSchedule("0", "0", "*", "*", "*"),
+    "@hourly":   CronSchedule("0", "*", "*", "*", "*"),
+}
 
-    Lines that are blank or start with ``#`` are silently ignored.
-    Lines that do not match the expected format are also skipped.
 
-    Args:
-        text:   Raw crontab content.
-        source: Label attached to every parsed entry (e.g. hostname).
+def _is_system_crontab_line(parts: list[str]) -> bool:
+    """Heuristic: system crontabs have a username field before the command."""
+    # parts already has 5 schedule fields stripped; parts[0] is either user or command
+    # A username won't contain '/' and won't start with common command characters.
+    if len(parts) < 2:
+        return False
+    candidate = parts[0]
+    return (
+        not candidate.startswith("/")
+        and not candidate.startswith("env")
+        and not candidate.startswith("nice")
+        and "/" not in candidate
+        and candidate.isidentifier()
+    )
 
-    Returns:
-        Ordered list of parsed cron entries.
+
+def parse_crontab(text: str, server: str = "unknown", system: bool = False) -> List[CronEntry]:
+    """Parse *text* as a crontab file and return a list of :class:`CronEntry`.
+
+    Parameters
+    ----------
+    text:   Raw crontab content.
+    server: Logical server name to attach to each entry.
+    system: If True, treat lines as system crontab format (with username field).
     """
     entries: List[CronEntry] = []
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("@reboot"):
             continue
-        m = _CRON_LINE_RE.match(stripped)
-        if m is None:
+        if line.startswith("@"):
+            token, _, command = line.partition(" ")
+            schedule = _SPECIAL_SCHEDULES.get(token)
+            if schedule and command:
+                entries.append(CronEntry(schedule=schedule, command=command.strip(), server=server, raw=raw_line))
             continue
-        entries.append(
-            CronEntry(
-                minute=m.group("minute"),
-                hour=m.group("hour"),
-                dom=m.group("dom"),
-                month=m.group("month"),
-                dow=m.group("dow"),
-                command=m.group("command").strip(),
-                source=source,
-                line_number=lineno,
-            )
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        schedule = CronSchedule(
+            minute=parts[0], hour=parts[1], day=parts[2], month=parts[3], weekday=parts[4]
         )
+        rest = parts[5:]
+        user: Optional[str] = None
+        if system or _is_system_crontab_line(rest):
+            user = rest[0]
+            command = " ".join(rest[1:])
+        else:
+            command = " ".join(rest)
+        entries.append(CronEntry(schedule=schedule, command=command, server=server, raw=raw_line, user=user))
     return entries
