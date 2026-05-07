@@ -86,3 +86,26 @@ def export_csv(entries: List[CronEntry], conflicts: List[Conflict]) -> str:
         )
 
     return output.getvalue()
+
+
+def export_summary(entries: List[CronEntry], conflicts: List[Conflict]) -> str:
+    """Return a human-readable plain-text summary of the audit results.
+
+    Useful for printing to stdout or writing to a log file.
+    """
+    lines = [
+        f"Cron Audit Summary",
+        f"==================",
+        f"Total entries : {len(entries)}",
+        f"Total conflicts: {len(conflicts)}",
+    ]
+    if conflicts:
+        lines.append("")
+        lines.append("Conflicts:")
+        for i, conflict in enumerate(conflicts, start=1):
+            lines.append(
+                f"  {i}. [{conflict.reason}] "
+                f"{conflict.entry_a.server}:{conflict.entry_a.command!r} "
+                f"vs {conflict.entry_b.server}:{conflict.entry_b.command!r}"
+            )
+    return "\n".join(lines) + "\n"
