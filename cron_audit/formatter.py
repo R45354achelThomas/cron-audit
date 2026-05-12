@@ -75,3 +75,27 @@ def format_summary(entry_count: int, server_count: int, conflict_count: int) -> 
         f"Summary: {entry_count} job(s) across "
         f"{server_count} server(s), {conflict_count} conflict(s) found."
     )
+
+
+def format_full_report(
+    servers: dict,
+    conflicts: List[Conflict],
+) -> str:
+    """Return a complete formatted report combining all sections.
+
+    Args:
+        servers: Mapping of server name to list of CronEntry objects.
+        conflicts: List of detected Conflict objects.
+
+    Returns:
+        A multi-section human-readable report string.
+    """
+    entry_count = sum(len(entries) for entries in servers.values())
+    lines = [_HEADER, "Cron Audit Report", _HEADER, ""]
+    for server, entries in servers.items():
+        lines.append(format_server_section(server, entries))
+        lines.append("")
+    lines.append(format_conflicts_section(conflicts))
+    lines.append("")
+    lines.append(format_summary(entry_count, len(servers), len(conflicts)))
+    return "\n".join(lines)
