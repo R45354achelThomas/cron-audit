@@ -79,3 +79,15 @@ def filter_entries(
             continue
         result.append(entry)
     return result
+
+
+def group_by_server(entries: List[CronEntry]) -> dict[str, List[CronEntry]]:
+    """Group a list of CronEntry objects by their server name.
+
+    Returns a dict mapping each server name to the list of entries
+    belonging to that server, preserving original order within each group.
+    """
+    groups: dict[str, List[CronEntry]] = {}
+    for entry in entries:
+        groups.setdefault(entry.server, []).append(entry)
+    return groups
